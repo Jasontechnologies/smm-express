@@ -5,7 +5,7 @@ import { initStore } from "./store.js";
 import authRoutes from "./routes/auth.js";
 import japRoutes from "./routes/jap.js";
 import settingsRoutes from "./routes/settings.js";
-import bot from "./routes/telegramBot.js"; // optional: only if you already integrated Telegram bot
+//import bot from "./routes/telegramBot.js"; // optional: only if you already integrated Telegram bot
 
 dotenv.config();
 
