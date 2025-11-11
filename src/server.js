@@ -5,7 +5,7 @@ import { initStore } from "./store.js";
 import authRoutes from "./routes/auth.js";
 import japRoutes from "./routes/jap.js";
 import settingsRoutes from "./routes/settings.js";
-//import bot from "./routes/telegramBot.js"; // optional: only if you already integrated Telegram bot
+import setupTelegramBot from "./routes/telegramBot.js"; // ✅ Telegram bot integration
 
 dotenv.config();
 
@@ -16,8 +16,8 @@ const PORT = process.env.PORT || 4000;
 // 🧩 1. Middleware Setup
 // -------------------------------------
 const allowedOrigins = [
-    "http://localhost:5173", // local dev (React)
-    "https://smm-react-six.vercel.app", // your production frontend
+    "http://localhost:5173", // Local React dev
+    "https://smm-react-six.vercel.app", // Production frontend (Vercel)
 ];
 
 app.use(
@@ -36,7 +36,7 @@ app.use(
 app.use(express.json());
 
 // -------------------------------------
-// 🗄️ 2. Database Initialization
+// 🗄 2. Database Initialization
 // -------------------------------------
 async function startServer() {
     try {
@@ -64,14 +64,13 @@ async function startServer() {
         app.get("/health", (req, res) => res.sendStatus(200));
 
         // -------------------------------------
-        // 🤖 4. Telegram Bot Webhook (optional)
+        // 🤖 4. Telegram Bot Webhook Setup
         // -------------------------------------
-        // If you’re running webhook mode, ensure this runs after Express starts
         if (process.env.TELEGRAM_BOT_TOKEN && process.env.HOST_URL) {
-            console.log("🤖 Telegram Bot is initialized.");
-            // The bot file handles webhook setup internally
+            console.log("🤖 Initializing Telegram Bot...");
+            setupTelegramBot(app); // ✅ integrates bot webhook route
         } else {
-            console.warn("⚠️ Telegram bot not initialized: missing token or host URL.");
+            console.warn("⚠ Telegram bot not initialized: missing TELEGRAM_BOT_TOKEN or HOST_URL.");
         }
 
         // -------------------------------------
@@ -79,10 +78,11 @@ async function startServer() {
         // -------------------------------------
         app.listen(PORT, () => {
             console.log(`✅ Server running at http://localhost:${PORT}`);
-            console.log(`🌍 Ready for requests on port ${PORT}`);
+            console.log(`🌍 Ready for requests on port ${PORT}`)
+            console.log("📡 Watching for Telegram messages...");
         });
 
-        // Handle graceful shutdown
+        // Graceful shutdown
         process.on("SIGTERM", () => {
             console.log("🧹 Shutting down gracefully...");
             process.exit(0);
