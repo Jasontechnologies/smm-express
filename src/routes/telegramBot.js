@@ -2,7 +2,7 @@ import TelegramBot from "node-telegram-bot-api";
 import axios from "axios";
 import dotenv from "dotenv";
 import { store } from "../store.js";
-import { fetchServices, getOrderStatus } from "../japClient.js";
+import { fetchServices } from "../japClient.js";
 
 dotenv.config();
 
@@ -32,7 +32,7 @@ export function setupTelegramBot(app) {
     const servicesCache = {};
 
     // =====================================================
-    // 👋 GREETING HANDLER (for "hi", "hello", etc.)
+    // 🟢 GREETING HANDLER — triggers on “hi”, “hello”, etc.
     // =====================================================
     bot.on("message", (msg) => {
         const text = msg.text?.toLowerCase();
@@ -51,7 +51,7 @@ export function setupTelegramBot(app) {
                         inline_keyboard: [
                             [{ text: "🛍️ Place Order", callback_data: "start_order" }],
                             [{ text: "💰 Check Balance", callback_data: "check_balance" }],
-                            [{ text: "📦 Check Order Status", callback_data: "check_status" }],
+                            [{ text: "📜 View Order History", callback_data: "view_orders" }],
                             [{ text: "⚙️ Set JAP Key", callback_data: "set_key_help" }],
                         ],
                     },
@@ -61,14 +61,14 @@ export function setupTelegramBot(app) {
     });
 
     // =====================================================
-    // 🟢 /start Command
+    // 🟢 /start command
     // =====================================================
     bot.onText(/\/start/, (msg) => {
         bot.sendMessage(
             msg.chat.id,
             "✨ *Welcome to Quantum JAP Bot!* ✨\n\n" +
             "Here’s what I can do:\n\n" +
-            "🛍️ Place new JAP orders\n💰 Check your JAP balance\n📦 Track your order status\n⚙️ Save your JAP API key\n\n" +
+            "🛍️ Place new JAP orders\n💰 Check your JAP balance\n📜 View order history\n⚙️ Save your JAP API key\n\n" +
             "What would you like to do?",
             {
                 parse_mode: "Markdown",
@@ -76,7 +76,7 @@ export function setupTelegramBot(app) {
                     inline_keyboard: [
                         [{ text: "🛍️ Place Order", callback_data: "start_order" }],
                         [{ text: "💰 Check Balance", callback_data: "check_balance" }],
-                        [{ text: "📦 Check Order Status", callback_data: "check_status" }],
+                        [{ text: "📜 View Order History", callback_data: "view_orders" }],
                         [{ text: "⚙️ Set JAP Key", callback_data: "set_key_help" }],
                     ],
                 },
@@ -85,7 +85,7 @@ export function setupTelegramBot(app) {
     });
 
     // =====================================================
-    // ⚙️ Inline Buttons Handler
+    // ⚙️ Inline menu buttons
     // =====================================================
     bot.on("callback_query", async (callbackQuery) => {
         const chatId = callbackQuery.message.chat.id;
@@ -94,7 +94,7 @@ export function setupTelegramBot(app) {
 
         try {
             // ===========================
-            // 🛍️ Start Order
+            // 🛍️ Start order
             // ===========================
             if (data === "start_order") {
                 bot.sendMessage(chatId, "🔍 Fetching Twitter services... Please wait!");
@@ -110,7 +110,7 @@ export function setupTelegramBot(app) {
             }
 
             // ===========================
-            // 💰 Check Balance
+            // 💰 Check balance
             // ===========================
             if (data === "check_balance") {
                 const settings = await store.getSettings();
@@ -131,7 +131,18 @@ export function setupTelegramBot(app) {
             }
 
             // ===========================
-            // ⚙️ Help with /setkey
+            // 📜 View Order History
+            // ===========================
+            if (data === "view_orders") {
+                bot.sendMessage(
+                    chatId,
+                    "🌍 *View your full order history here:*\nhttps://smm-react-six.vercel.app/orders",
+                    { parse_mode: "Markdown" }
+                );
+            }
+
+            // ===========================
+            // ⚙️ Show setkey help
             // ===========================
             if (data === "set_key_help") {
                 bot.sendMessage(
@@ -142,113 +153,31 @@ export function setupTelegramBot(app) {
             }
 
             // ===========================
-            // 📦 Check Order Status
+            // ◀️ Prev / ▶️ Next page navigation
             // ===========================
-            if (data === "check_status") {
-                bot.sendMessage(
-                    chatId,
-                    "📦 How would you like to check order status?",
-                    {
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: "📜 View Last 5 Orders", callback_data: "last_orders" }],
-                                [{ text: "🔍 Check Specific Order ID", callback_data: "specific_status" }],
-                            ],
-                        },
-                    }
-                );
+            if (data.startsWith("page_")) {
+                const [, direction] = data.split("_");
+                const cache = servicesCache[chatId];
+                if (!cache) return;
+                const totalPages = Math.ceil(cache.services.length / 5);
+                if (direction === "next" && cache.page < totalPages - 1) cache.page++;
+                if (direction === "prev" && cache.page > 0) cache.page--;
+                showServicePage(chatId, cache.page);
             }
 
             // ===========================
-            // 🟢 Show Last 5 Orders (Detailed)
+            // 🧾 Service selection
             // ===========================
-            if (data === "last_orders") {
-                const lastOrders = await store.getOrders();
-                if (!lastOrders.length) {
-                    bot.sendMessage(chatId, "😕 No recent orders found.");
-                    return;
-                }
-
-                const recent = lastOrders.slice(0, 5);
-                for (const order of recent) {
-                    const id = order.japOrderId || order._id.toString().slice(-6);
-                    const service = order.serviceName || order.serviceId || "Unknown Service";
-                    const status = order.status || "Pending";
-                    const quantity = order.quantity || "N/A";
-                    const link = order.link?.slice(0, 60) + (order.link?.length > 60 ? "..." : "");
-                    const date = new Date(order.createdAt).toLocaleString("en-GB", {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                    });
-
-                    const msg =
-                        `🧾 *Order #${id}*
-━━━━━━━━━━━━━━━
-📦 *Service:* ${service}
-🔗 *Link:* ${link}
-📊 *Quantity:* ${quantity}
-📅 *Created:* ${date}
-📈 *Status:* ${status.toUpperCase()}`;
-
-                    await bot.sendMessage(chatId, msg, {
-                        parse_mode: "Markdown",
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: "🔍 View JAP Status", callback_data: `order_${order.japOrderId || order._id}` }],
-                            ],
-                        },
-                    });
-                }
-
-                await bot.sendMessage(
-                    chatId,
-                    "🌍 *View all your orders:*\nhttps://smm-react-six.vercel.app/orders",
-                    { parse_mode: "Markdown" }
-                );
-                return;
+            if (data.startsWith("service_")) {
+                const serviceId = data.replace("service_", "");
+                state.serviceId = serviceId;
+                state.step = "awaiting_link";
+                userStates[chatId] = state;
+                bot.sendMessage(chatId, "🔗 Please send the link for your order:");
             }
 
             // ===========================
-            // 🔍 Specific Order Entry
-            // ===========================
-            if (data === "specific_status") {
-                userStates[chatId] = { step: "awaiting_status_id" };
-                bot.sendMessage(chatId, "🔍 Please enter your JAP Order ID:");
-                return;
-            }
-
-            // ===========================
-            // 🔍 View JAP Status for Specific Order
-            // ===========================
-            if (data.startsWith("order_")) {
-                const orderId = data.replace("order_", "").trim();
-                const settings = await store.getSettings();
-                const key = settings.japKey || process.env.JAP_API_KEY;
-
-                try {
-                    const statusData = await getOrderStatus(key, orderId);
-                    const status = statusData.mappedStatus || statusData.status || "Unknown";
-                    const charge = statusData.charge || "N/A";
-                    const startCount = statusData.start_count || "N/A";
-                    const remains = statusData.remains || "N/A";
-
-                    bot.sendMessage(
-                        chatId,
-                        `📦 *Order Status*\n\n🆔 Order ID: ${orderId}\n📊 Status: *${status.toUpperCase()}*\n💵 Charge: ${charge}\n📈 Start: ${startCount}\n📉 Remains: ${remains}\n\n🔗 *View all your orders:*\nhttps://smm-react-six.vercel.app/orders`,
-                        { parse_mode: "Markdown" }
-                    );
-                } catch (err) {
-                    console.error("Order check error:", err.message);
-                    bot.sendMessage(
-                        chatId,
-                        `❗ Could not find details for Order ID: ${orderId}\n\nPlease verify on the dashboard:\nhttps://smm-react-six.vercel.app/orders`
-                    );
-                }
-                return;
-            }
-
-            // ===========================
-            // Order Confirmation & Cancel
+            // ❌ Cancel or ✅ Confirm
             // ===========================
             if (data === "cancel_order") {
                 delete userStates[chatId];
@@ -257,7 +186,7 @@ export function setupTelegramBot(app) {
 
             if (data === "confirm_order") {
                 if (!state.link || !state.quantity || !state.serviceId) {
-                    bot.sendMessage(chatId, "⚠️ Missing order details. Please start again.");
+                    bot.sendMessage(chatId, "⚠️ Missing order details. Please start again with /order.");
                     return;
                 }
 
@@ -288,7 +217,7 @@ export function setupTelegramBot(app) {
                     );
                 } catch (err) {
                     console.error("Order error:", err.response?.data || err.message);
-                    bot.sendMessage(chatId, "❗ Failed to place order. Please try again later.");
+                    bot.sendMessage(chatId, "❗ Failed to place the order. Please try again later.");
                 }
 
                 delete userStates[chatId];
@@ -301,7 +230,7 @@ export function setupTelegramBot(app) {
     });
 
     // =====================================================
-    // 🧾 Handle Manual Status Entry & Order Messages
+    // 📩 Handle text input during order
     // =====================================================
     bot.on("message", async (msg) => {
         const chatId = msg.chat.id;
@@ -311,41 +240,6 @@ export function setupTelegramBot(app) {
         const state = userStates[chatId];
         if (!state) return;
 
-        // 🔍 Manual JAP order ID check
-        if (state.step === "awaiting_status_id") {
-            const orderId = text.trim();
-            if (!/^\d+$/.test(orderId)) {
-                return bot.sendMessage(chatId, "❗ Please enter a valid numeric Order ID.");
-            }
-
-            bot.sendMessage(chatId, "⏳ Checking order status...");
-            delete userStates[chatId];
-
-            try {
-                const settings = await store.getSettings();
-                const key = settings.japKey || process.env.JAP_API_KEY;
-
-                const statusData = await getOrderStatus(key, orderId);
-                const status = statusData.mappedStatus || statusData.status || "Unknown";
-                const charge = statusData.charge || "N/A";
-                const startCount = statusData.start_count || "N/A";
-                const remains = statusData.remains || "N/A";
-
-                bot.sendMessage(
-                    chatId,
-                    `📦 *Order Status*\n\n🆔 Order ID: ${orderId}\n📊 Status: *${status.toUpperCase()}*\n💵 Charge: ${charge}\n📈 Start: ${startCount}\n📉 Remains: ${remains}\n\n🔗 *View all your orders:*\nhttps://smm-react-six.vercel.app/orders`,
-                    { parse_mode: "Markdown" }
-                );
-            } catch (err) {
-                console.error("Specific status error:", err.message);
-                bot.sendMessage(
-                    chatId,
-                    `❌ Order not found for ID: ${orderId}\n\nCheck here:\nhttps://smm-react-six.vercel.app/orders`
-                );
-            }
-        }
-
-        // 🔗 Order Flow: Link & Quantity
         if (state.step === "awaiting_link") {
             state.link = text;
             state.step = "awaiting_quantity";
@@ -373,7 +267,7 @@ export function setupTelegramBot(app) {
     });
 
     // =====================================================
-    // 📋 Pagination for Services
+    // Function to paginate and show service list
     // =====================================================
     function showServicePage(chatId, page = 0) {
         const cache = servicesCache[chatId];
@@ -400,7 +294,7 @@ export function setupTelegramBot(app) {
 }
 
 // =====================================================
-// 🔔 Notify Order Status Updates
+// 🔔 Notify status updates
 // =====================================================
 export async function notifyOrderStatus(order) {
     if (!bot || !order.chatId) return;
