@@ -5,19 +5,17 @@ import { initStore } from "./store.js";
 import authRoutes from "./routes/auth.js";
 import japRoutes from "./routes/jap.js";
 import settingsRoutes from "./routes/settings.js";
-import setupTelegramBot from "./routes/telegramBot.js"; // ✅ Telegram bot integration
+import { setupTelegramBot } from "./routes/telegramBot.js"; // ✅ updated import
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// -------------------------------------
-// 🧩 1. Middleware Setup
-// -------------------------------------
+// Middleware
 const allowedOrigins = [
-    "http://localhost:5173", // Local React dev
-    "https://smm-react-six.vercel.app", // Production frontend (Vercel)
+    "http://localhost:5173",
+    "https://smm-react-six.vercel.app"
 ];
 
 app.use(
@@ -35,58 +33,42 @@ app.use(
 
 app.use(express.json());
 
-// -------------------------------------
-// 🗄 2. Database Initialization
-// -------------------------------------
 async function startServer() {
     try {
         console.log("⏳ Connecting to MongoDB...");
         await initStore();
         console.log("✅ MongoDB connection successful");
 
-        // -------------------------------------
-        // 🚀 3. Route Registration
-        // -------------------------------------
+        // Routes
         app.use("/api/auth", authRoutes);
         app.use("/api/jap", japRoutes);
         app.use("/api/settings", settingsRoutes);
 
-        // Base route
         app.get("/", (req, res) => {
-            res.status(200).send({
+            res.status(200).json({
                 ok: true,
                 message: "Quantum JAP Backend is running ✅",
                 timestamp: new Date().toISOString(),
             });
         });
 
-        // Health check endpoint (for Render uptime checks)
         app.get("/health", (req, res) => res.sendStatus(200));
 
-        // -------------------------------------
-        // 🤖 4. Telegram Bot Webhook Setup
-        // -------------------------------------
+        // ✅ Initialize Telegram bot webhook
         if (process.env.TELEGRAM_BOT_TOKEN && process.env.HOST_URL) {
             console.log("🤖 Initializing Telegram Bot...");
-            setupTelegramBot(app); // ✅ integrates bot webhook route
+            setupTelegramBot(app); // <-- integrates bot webhook directly into same app
         } else {
-            console.warn("⚠ Telegram bot not initialized: missing TELEGRAM_BOT_TOKEN or HOST_URL.");
+            console.warn("⚠️ Telegram bot not initialized: missing token or host URL.");
         }
 
-        // -------------------------------------
-        // 🟢 5. Start Server
-        // -------------------------------------
+        // Start server
         app.listen(PORT, () => {
-            console.log(`✅ Server running at http://localhost:${PORT}`);
-            console.log(`🌍 Ready for requests on port ${PORT}`)
+            console.log(`✅ Server running on port ${PORT}`);
+            console.log("🌍 Ready for requests");
             console.log("📡 Watching for Telegram messages...");
         });
 
-        // Graceful shutdown
-        process.on("SIGTERM", () => {
-            console.log("🧹 Shutting down gracefully...");
-            process.exit(0);
-        });
     } catch (err) {
         console.error("❌ Failed to start server:", err);
         process.exit(1);
