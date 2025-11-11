@@ -11,13 +11,10 @@ export async function initStore() {
     if (!uri) throw new Error("Missing MONGODB_URI in environment variables");
 
     try {
-        await mongoose.connect(uri, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-        });
+        await mongoose.connect(uri);
         console.log("✅ Connected to MongoDB Atlas");
 
-        // Ensure admin user exists
+        // Seed default admin if no users
         const count = await User.countDocuments();
         if (count === 0) {
             const email = process.env.ADMIN_EMAIL || "admin@example.com";
@@ -42,29 +39,30 @@ export async function initStore() {
 // --------------------------------------------
 // 🔹 2. Define Schemas
 // --------------------------------------------
-
-// User Schema
 const userSchema = new mongoose.Schema({
     email: { type: String, unique: true },
     password: String,
     createdAt: { type: Date, default: Date.now },
 });
 
-// Order Schema
-const orderSchema = new mongoose.Schema({
-    serviceId: String,
-    link: String,
-    quantity: Number,
-    runs: Number,
-    interval: Number,
-    japOrderId: String,
-    status: { type: String, default: "pending" },
-    error: String,
-    chatId: String,
-    createdAt: { type: Date, default: Date.now },
-});
+const orderSchema = new mongoose.Schema(
+    {
+        id: { type: String, unique: true, required: true }, // custom ID based on Date.now()
+        serviceId: String,
+        link: String,
+        quantity: Number,
+        runs: Number,
+        interval: Number,
+        japOrderId: String,
+        status: { type: String, default: "pending" },
+        error: String,
+        chatId: String,
+        createdAt: { type: Date, default: Date.now },
+        updatedAt: { type: Date, default: Date.now },
+    },
+    { minimize: false }
+);
 
-// Settings Schema
 const settingsSchema = new mongoose.Schema({
     japKey: String,
     otherSettings: mongoose.Schema.Types.Mixed,
@@ -73,12 +71,12 @@ const settingsSchema = new mongoose.Schema({
 // --------------------------------------------
 // 🔹 3. Create Models
 // --------------------------------------------
-const User = mongoose.model("User", userSchema);
-const Order = mongoose.model("Order", orderSchema);
-const Setting = mongoose.model("Setting", settingsSchema);
+const User = mongoose.models.User || mongoose.model("User", userSchema);
+const Order = mongoose.models.Order || mongoose.model("Order", orderSchema);
+const Setting = mongoose.models.Setting || mongoose.model("Setting", settingsSchema);
 
 // --------------------------------------------
-// 🔹 4. Store Interface (compatible with your code)
+// 🔹 4. Store Interface (safe CRUD)
 // --------------------------------------------
 export const store = {
     // USERS ----------------------------
@@ -92,9 +90,25 @@ export const store = {
 
     // ORDERS ---------------------------
     async saveOrder(order) {
-        const newOrder = new Order(order);
-        await newOrder.save();
-        return newOrder.toObject();
+        // Ensure every order has a unique string ID
+        if (!order.id) order.id = String(Date.now());
+
+        // Check for existing order by id or japOrderId
+        const existing =
+            (order.japOrderId && (await Order.findOne({ japOrderId: order.japOrderId }))) ||
+            (order.id && (await Order.findOne({ id: order.id })));
+
+        if (existing) {
+            Object.assign(existing, order, { updatedAt: new Date() });
+            await existing.save();
+            console.log(`🔁 Order updated → ${existing.id}`);
+            return existing.toObject();
+        } else {
+            const newOrder = new Order(order);
+            await newOrder.save();
+            console.log(`🆕 Order created → ${newOrder.id}`);
+            return newOrder.toObject();
+        }
     },
 
     async getOrders() {
