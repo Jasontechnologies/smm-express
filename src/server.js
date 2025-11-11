@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 4000;
 // -------------------------------------
 const allowedOrigins = [
     "http://localhost:5173", // local dev (React)
-    "https://your-frontend.vercel.app", // your production frontend
+    "https://smm-react-six.vercel.app", // your production frontend
 ];
 
 app.use(
