@@ -6,7 +6,7 @@ import { fetchServices } from "../japClient.js";
 
 dotenv.config();
 
-let bot; // global reference for notifications
+let bot;
 
 export function setupTelegramBot(app) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -18,12 +18,10 @@ export function setupTelegramBot(app) {
         return;
     }
 
-    // ✅ Initialize Telegram bot in webhook mode
     bot = new TelegramBot(token);
     bot.setWebHook(`${url}/bot${token}`);
-    console.log(`🌐 Telegram webhook set at ${url}/bot${token}`);
+    console.log(`🌐 Telegram webhook set at: ${url}/bot${token}`);
 
-    // ✅ Webhook handler
     app.post(`/bot${token}`, (req, res) => {
         console.log("📩 Telegram update received");
         bot.processUpdate(req.body);
@@ -31,185 +29,259 @@ export function setupTelegramBot(app) {
     });
 
     const userStates = {};
+    const servicesCache = {};
 
     // =====================================================
-    // 🟢 /start
+    // 🟢 GREETING HANDLER — triggers on “hi”, “hello”, etc.
+    // =====================================================
+    bot.on("message", (msg) => {
+        const text = msg.text?.toLowerCase();
+        if (!text || text.startsWith("/")) return;
+
+        const greetings = ["hi", "hello", "hey", "yo", "hola"];
+        if (greetings.some((g) => text.includes(g))) {
+            return bot.sendMessage(
+                msg.chat.id,
+                "👋 *Hey there!* Welcome to *Quantum JAP Bot* 🚀\n\n" +
+                "I can help you place orders, check balances, or set your JAP API key.\n\n" +
+                "Choose one below 👇",
+                {
+                    parse_mode: "Markdown",
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: "🛍️ Place Order", callback_data: "start_order" }],
+                            [{ text: "💰 Check Balance", callback_data: "check_balance" }],
+                            [{ text: "⚙️ Set JAP Key", callback_data: "set_key_help" }],
+                        ],
+                    },
+                }
+            );
+        }
+    });
+
+    // =====================================================
+    // 🟢 /start command
     // =====================================================
     bot.onText(/\/start/, (msg) => {
-        const chatId = msg.chat.id;
         bot.sendMessage(
-            chatId,
-            "👋 *Welcome to Quantum JAP Bot!*\n\nUse the commands below:\n" +
-            "• `/order` — Place a new JAP order\n" +
-            "• `/balance` — Check JAP balance\n" +
-            "• `/setkey <your_api_key>` — Save JAP API key",
-            { parse_mode: "Markdown" }
+            msg.chat.id,
+            "✨ *Welcome to Quantum JAP Bot!* ✨\n\n" +
+            "Here’s what I can do:\n\n" +
+            "🛍️ Place new JAP orders\n💰 Check your JAP balance\n⚙️ Save your JAP API key\n\n" +
+            "What would you like to do?",
+            {
+                parse_mode: "Markdown",
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: "🛍️ Place Order", callback_data: "start_order" }],
+                        [{ text: "💰 Check Balance", callback_data: "check_balance" }],
+                        [{ text: "⚙️ Set JAP Key", callback_data: "set_key_help" }],
+                    ],
+                },
+            }
         );
     });
 
     // =====================================================
-    // 🟢 /setkey
-    // =====================================================
-    bot.onText(/\/setkey (.+)/, async (msg, match) => {
-        const chatId = msg.chat.id;
-        const newKey = match[1]?.trim();
-
-        if (!newKey || newKey.length < 10) {
-            return bot.sendMessage(
-                chatId,
-                "⚠️ Please provide a valid JAP API key.\n\nExample:\n`/setkey your_jap_key_here`",
-                { parse_mode: "Markdown" }
-            );
-        }
-
-        try {
-            await store.setSettings({ japKey: newKey });
-            bot.sendMessage(chatId, "✅ JAP API key saved successfully!");
-        } catch (err) {
-            console.error("Set key error:", err.message);
-            bot.sendMessage(chatId, "❗️ Failed to save JAP key.");
-        }
-    });
-
-    // =====================================================
-    // 🟢 /balance
-    // =====================================================
-    bot.onText(/\/balance/, async (msg) => {
-        const chatId = msg.chat.id;
-
-        try {
-            const settings = await store.getSettings();
-            const key = settings.japKey || process.env.JAP_API_KEY;
-
-            const res = await axios.post(
-                "https://justanotherpanel.com/api/v2",
-                new URLSearchParams({ key, action: "balance" }).toString(),
-                { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-            );
-
-            const balance = res.data.balance || "0.00";
-            const currency = res.data.currency || "USD";
-
-            bot.sendMessage(chatId, `💰 *Your JAP Balance:*\n${balance} ${currency}`, {
-                parse_mode: "Markdown",
-            });
-        } catch (err) {
-            console.error("Balance check error:", err.message);
-            bot.sendMessage(chatId, "❗️ Failed to fetch JAP balance.");
-        }
-    });
-
-    // =====================================================
-    // 🟢 /order (Interactive flow)
-    // =====================================================
-    bot.onText(/\/order/, async (msg) => {
-        const chatId = msg.chat.id;
-        userStates[chatId] = { step: "awaiting_link" };
-        bot.sendMessage(chatId, "🔗 Please send the link for your order:");
-    });
-
-    // Step-by-step handling
-    bot.on("message", async (msg) => {
-        const chatId = msg.chat.id;
-        const text = msg.text;
-
-        if (text.startsWith("/")) return;
-        const state = userStates[chatId];
-        if (!state) return;
-
-        try {
-            if (state.step === "awaiting_link") {
-                state.link = text;
-                state.step = "awaiting_quantity";
-                bot.sendMessage(chatId, "📦 Got it! Now enter the *quantity*:", { parse_mode: "Markdown" });
-            } else if (state.step === "awaiting_quantity") {
-                const quantity = parseInt(text);
-                if (isNaN(quantity) || quantity <= 0) {
-                    return bot.sendMessage(chatId, "❗ Please enter a valid number for quantity.");
-                }
-                state.quantity = quantity;
-                state.step = "awaiting_confirmation";
-
-                bot.sendMessage(
-                    chatId,
-                    `Confirm your order:\n\n🔗 Link: ${state.link}\n📦 Quantity: ${state.quantity}`,
-                    {
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: "✅ Confirm", callback_data: "confirm_order" }],
-                                [{ text: "❌ Cancel", callback_data: "cancel_order" }],
-                            ],
-                        },
-                    }
-                );
-            }
-        } catch (err) {
-            console.error("Telegram message error:", err.message);
-            bot.sendMessage(chatId, "⚠️ Something went wrong. Please try again.");
-        }
-    });
-
-    // =====================================================
-    // Handle inline button callbacks
+    // ⚙️ Inline menu buttons
     // =====================================================
     bot.on("callback_query", async (callbackQuery) => {
         const chatId = callbackQuery.message.chat.id;
         const data = callbackQuery.data;
-        const state = userStates[chatId];
+        const state = userStates[chatId] || {};
 
-        if (!state) return bot.answerCallbackQuery(callbackQuery.id);
+        try {
+            // ===========================
+            // 🛍️ Start order
+            // ===========================
+            if (data === "start_order") {
+                bot.sendMessage(chatId, "🔍 Fetching Twitter services... Please wait!");
+                const settings = await store.getSettings();
+                const key = settings.japKey || process.env.JAP_API_KEY;
+                const services = await fetchServices(key);
 
-        if (data === "cancel_order") {
-            delete userStates[chatId];
-            bot.sendMessage(chatId, "❌ Order cancelled.");
-            return bot.answerCallbackQuery(callbackQuery.id);
-        }
+                if (!services.length)
+                    return bot.sendMessage(chatId, "⚠️ No Twitter services found. Check your JAP key.");
 
-        if (data === "confirm_order") {
-            if (!state.link || !state.quantity) {
-                bot.sendMessage(chatId, "⚠️ Missing order details. Please start again with /order.");
-                return bot.answerCallbackQuery(callbackQuery.id);
+                servicesCache[chatId] = { services, page: 0 };
+                showServicePage(chatId, 0);
             }
 
-            bot.sendMessage(chatId, "⏳ Placing your order, please wait...");
+            // ===========================
+            // 💰 Check balance
+            // ===========================
+            if (data === "check_balance") {
+                const settings = await store.getSettings();
+                const key = settings.japKey || process.env.JAP_API_KEY;
 
-            try {
-                // ✅ Use BOT_JWT for authorization
-                const response = await axios.post(
-                    `${url}/api/jap/order`,
-                    {
-                        serviceId: process.env.DEFAULT_SERVICE_ID || 1,
-                        link: state.link,
-                        quantity: state.quantity,
-                        chatId: chatId,
-                    },
-                    {
-                        headers: {
-                            "Content-Type": "application/json",
-                            Authorization: `Bearer ${botJwt}`,
-                        },
-                    }
+                const res = await axios.post(
+                    "https://justanotherpanel.com/api/v2",
+                    new URLSearchParams({ key, action: "balance" }).toString(),
+                    { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
                 );
 
-                const { localOrder } = response.data;
+                const balance = res.data.balance || "0.00";
+                const currency = res.data.currency || "USD";
+
+                bot.sendMessage(chatId, `💰 *Your JAP Balance:*\n${balance} ${currency}`, {
+                    parse_mode: "Markdown",
+                });
+            }
+
+            // ===========================
+            // ⚙️ Show setkey help
+            // ===========================
+            if (data === "set_key_help") {
                 bot.sendMessage(
                     chatId,
-                    `✅ *Order Placed Successfully!*\n\n🆔 Order ID: ${localOrder.id}\n📦 Status: ${localOrder.status}`,
+                    "🧩 To set your JAP API key, type:\n\n`/setkey your_api_key_here`",
                     { parse_mode: "Markdown" }
                 );
-            } catch (err) {
-                console.error("Order placement error:", err.response?.data || err.message);
-                bot.sendMessage(chatId, "❗ Failed to place the order. Please try again later.");
             }
 
-            delete userStates[chatId];
+            // ===========================
+            // ◀️ Prev / ▶️ Next page navigation
+            // ===========================
+            if (data.startsWith("page_")) {
+                const [, direction] = data.split("_");
+                const cache = servicesCache[chatId];
+                if (!cache) return;
+                const totalPages = Math.ceil(cache.services.length / 5);
+                if (direction === "next" && cache.page < totalPages - 1) cache.page++;
+                if (direction === "prev" && cache.page > 0) cache.page--;
+                showServicePage(chatId, cache.page);
+            }
+
+            // ===========================
+            // 🧾 Service selection
+            // ===========================
+            if (data.startsWith("service_")) {
+                const serviceId = data.replace("service_", "");
+                state.serviceId = serviceId;
+                state.step = "awaiting_link";
+                userStates[chatId] = state;
+                bot.sendMessage(chatId, "🔗 Please send the link for your order:");
+            }
+
+            // ===========================
+            // ❌ Cancel or ✅ Confirm
+            // ===========================
+            if (data === "cancel_order") {
+                delete userStates[chatId];
+                bot.sendMessage(chatId, "❌ Order cancelled.");
+            }
+
+            if (data === "confirm_order") {
+                if (!state.link || !state.quantity || !state.serviceId) {
+                    bot.sendMessage(chatId, "⚠️ Missing order details. Please start again with /order.");
+                    return;
+                }
+
+                bot.sendMessage(chatId, "⏳ Placing your order...");
+
+                try {
+                    const response = await axios.post(
+                        `${url}/api/jap/order`,
+                        {
+                            serviceId: state.serviceId,
+                            link: state.link,
+                            quantity: state.quantity,
+                            chatId,
+                        },
+                        {
+                            headers: {
+                                "Content-Type": "application/json",
+                                Authorization: `Bearer ${botJwt}`,
+                            },
+                        }
+                    );
+
+                    const { localOrder } = response.data;
+                    bot.sendMessage(
+                        chatId,
+                        `✅ *Order Placed Successfully!*\n\n🆔 Order ID: ${localOrder.id}\n📦 Status: ${localOrder.status}`,
+                        { parse_mode: "Markdown" }
+                    );
+                } catch (err) {
+                    console.error("Order error:", err.response?.data || err.message);
+                    bot.sendMessage(chatId, "❗ Failed to place the order. Please try again later.");
+                }
+
+                delete userStates[chatId];
+            }
+
             bot.answerCallbackQuery(callbackQuery.id);
+        } catch (err) {
+            console.error("Callback error:", err.message);
         }
     });
+
+    // =====================================================
+    // 📩 Handle text input during order
+    // =====================================================
+    bot.on("message", async (msg) => {
+        const chatId = msg.chat.id;
+        const text = msg.text;
+        if (!text || text.startsWith("/")) return;
+
+        const state = userStates[chatId];
+        if (!state) return;
+
+        if (state.step === "awaiting_link") {
+            state.link = text;
+            state.step = "awaiting_quantity";
+            bot.sendMessage(chatId, "📦 Got it! Now enter the *quantity*:", { parse_mode: "Markdown" });
+        } else if (state.step === "awaiting_quantity") {
+            const quantity = parseInt(text);
+            if (isNaN(quantity) || quantity <= 0)
+                return bot.sendMessage(chatId, "❗ Please enter a valid number for quantity.");
+            state.quantity = quantity;
+            state.step = "awaiting_confirmation";
+
+            bot.sendMessage(
+                chatId,
+                `🧾 Confirm your order:\n\n🔹 Service ID: ${state.serviceId}\n🔗 Link: ${state.link}\n📦 Quantity: ${state.quantity}`,
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: "✅ Confirm", callback_data: "confirm_order" }],
+                            [{ text: "❌ Cancel", callback_data: "cancel_order" }],
+                        ],
+                    },
+                }
+            );
+        }
+    });
+
+    // =====================================================
+    // Function to paginate and show service list
+    // =====================================================
+    function showServicePage(chatId, page = 0) {
+        const cache = servicesCache[chatId];
+        if (!cache) return;
+
+        const pageSize = 5;
+        const start = page * pageSize;
+        const slice = cache.services.slice(start, start + pageSize);
+
+        const buttons = slice.map((s) => [
+            { text: `${s.service} - ${s.name.slice(0, 35)}...`, callback_data: `service_${s.service}` },
+        ]);
+
+        const nav = [];
+        if (page > 0) nav.push({ text: "◀️ Prev", callback_data: "page_prev" });
+        if (start + pageSize < cache.services.length) nav.push({ text: "Next ▶️", callback_data: "page_next" });
+        if (nav.length) buttons.push(nav);
+
+        bot.sendMessage(chatId, `📋 *Available Services* (Page ${page + 1})`, {
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: buttons },
+        });
+    }
 }
 
 // =====================================================
-// 🔔 Notify order status updates (from backend)
+// 🔔 Notify status updates
 // =====================================================
 export async function notifyOrderStatus(order) {
     if (!bot || !order.chatId) return;
