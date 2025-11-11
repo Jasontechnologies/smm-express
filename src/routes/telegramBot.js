@@ -6,31 +6,30 @@ import { fetchServices } from "../japClient.js";
 
 dotenv.config();
 
-// Global bot instance (to use later in notifyOrderStatus)
-let bot;
+let bot; // global reference for notifications
 
 export function setupTelegramBot(app) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const url = process.env.HOST_URL;
+    const botJwt = process.env.BOT_JWT;
 
     if (!token || !url) {
         console.warn("⚠️ Missing TELEGRAM_BOT_TOKEN or HOST_URL — skipping Telegram setup.");
         return;
     }
 
-    // ✅ Initialize Telegram bot (webhook mode)
+    // ✅ Initialize Telegram bot in webhook mode
     bot = new TelegramBot(token);
     bot.setWebHook(`${url}/bot${token}`);
-    console.log(`🌐 Webhook set at ${url}/bot${token}`);
+    console.log(`🌐 Telegram webhook set at ${url}/bot${token}`);
 
-    // ✅ Webhook route uses same Express app
+    // ✅ Webhook handler
     app.post(`/bot${token}`, (req, res) => {
         console.log("📩 Telegram update received");
         bot.processUpdate(req.body);
         res.sendStatus(200);
     });
 
-    // Store per-user states
     const userStates = {};
 
     // =====================================================
@@ -68,7 +67,7 @@ export function setupTelegramBot(app) {
             bot.sendMessage(chatId, "✅ JAP API key saved successfully!");
         } catch (err) {
             console.error("Set key error:", err.message);
-            bot.sendMessage(chatId, "❗ Failed to save JAP key.");
+            bot.sendMessage(chatId, "❗️ Failed to save JAP key.");
         }
     });
 
@@ -96,118 +95,25 @@ export function setupTelegramBot(app) {
             });
         } catch (err) {
             console.error("Balance check error:", err.message);
-            bot.sendMessage(chatId, "❗ Failed to fetch JAP balance.");
+            bot.sendMessage(chatId, "❗️ Failed to fetch JAP balance.");
         }
     });
 
     // =====================================================
-    // 🟢 /order
+    // 🟢 /order (Interactive flow)
     // =====================================================
     bot.onText(/\/order/, async (msg) => {
         const chatId = msg.chat.id;
-
-        try {
-            const settings = await store.getSettings();
-            const key = settings.japKey || process.env.JAP_API_KEY;
-
-            bot.sendMessage(chatId, "📦 Fetching available Twitter services...");
-            const services = await fetchServices(key);
-
-            if (!services.length) {
-                return bot.sendMessage(chatId, "❗ No JAP services found. Please check your JAP key.");
-            }
-
-            const inlineKeyboard = services.slice(0, 10).map((s) => [
-                { text: s.name.slice(0, 40), callback_data: `select_service_${s.service}` },
-            ]);
-
-            userStates[chatId] = { step: "selecting_service", services };
-
-            bot.sendMessage(chatId, "👇 Select a service:", {
-                reply_markup: { inline_keyboard: inlineKeyboard },
-            });
-        } catch (err) {
-            console.error("Service fetch error:", err.message);
-            bot.sendMessage(chatId, "❗ Failed to fetch JAP services.");
-        }
+        userStates[chatId] = { step: "awaiting_link" };
+        bot.sendMessage(chatId, "🔗 Please send the link for your order:");
     });
 
-    // =====================================================
-    // 🟢 CALLBACK HANDLER
-    // =====================================================
-    bot.on("callback_query", async (callbackQuery) => {
-        const chatId = callbackQuery.message.chat.id;
-        const data = callbackQuery.data;
-        const state = userStates[chatId];
-
-        if (!state) return bot.answerCallbackQuery(callbackQuery.id);
-
-        try {
-            // ✅ Service selected
-            if (data.startsWith("select_service_")) {
-                const serviceId = data.replace("select_service_", "");
-                const service = state.services.find((s) => String(s.service) === serviceId);
-                state.service = service;
-                state.step = "awaiting_link";
-
-                bot.sendMessage(
-                    chatId,
-                    `✅ Selected: *${service.name}*\n\n🔗 Send the link for your order:`,
-                    { parse_mode: "Markdown" }
-                );
-            }
-
-            // ❌ Cancel
-            if (data === "cancel_order") {
-                delete userStates[chatId];
-                bot.sendMessage(chatId, "❌ Order cancelled.");
-            }
-
-            // ✅ Confirm
-            if (data === "confirm_order") {
-                if (!state.link || !state.quantity || !state.service) {
-                    return bot.sendMessage(chatId, "⚠️ Missing details. Please restart with /order");
-                }
-
-                bot.sendMessage(chatId, "⏳ Placing your order...");
-
-                try {
-                    const response = await axios.post(`${url}/api/jap/order`, {
-                        serviceId: state.service.service,
-                        link: state.link,
-                        quantity: state.quantity,
-                        chatId: chatId,
-                    });
-
-                    const { localOrder } = response.data;
-                    bot.sendMessage(
-                        chatId,
-                        `✅ *Order placed successfully!*\n\n🆔 Order ID: ${localOrder.id}\n📦 Status: ${localOrder.status}`,
-                        { parse_mode: "Markdown" }
-                    );
-                } catch (err) {
-                    console.error("Order placement error:", err.response?.data || err.message);
-                    bot.sendMessage(chatId, "❗ Failed to place order.");
-                }
-
-                delete userStates[chatId];
-            }
-
-            bot.answerCallbackQuery(callbackQuery.id);
-        } catch (err) {
-            console.error("Callback error:", err.message);
-            bot.answerCallbackQuery(callbackQuery.id);
-        }
-    });
-
-    // =====================================================
-    // 🟢 MESSAGE HANDLER
-    // =====================================================
+    // Step-by-step handling
     bot.on("message", async (msg) => {
         const chatId = msg.chat.id;
         const text = msg.text;
-        if (text.startsWith("/")) return;
 
+        if (text.startsWith("/")) return;
         const state = userStates[chatId];
         if (!state) return;
 
@@ -215,20 +121,19 @@ export function setupTelegramBot(app) {
             if (state.step === "awaiting_link") {
                 state.link = text;
                 state.step = "awaiting_quantity";
-                bot.sendMessage(chatId, "📊 Great! Now enter the *quantity*:", { parse_mode: "Markdown" });
+                bot.sendMessage(chatId, "📦 Got it! Now enter the *quantity*:", { parse_mode: "Markdown" });
             } else if (state.step === "awaiting_quantity") {
                 const quantity = parseInt(text);
                 if (isNaN(quantity) || quantity <= 0) {
-                    return bot.sendMessage(chatId, "⚠️ Please enter a valid number.");
+                    return bot.sendMessage(chatId, "❗ Please enter a valid number for quantity.");
                 }
                 state.quantity = quantity;
-                state.step = "confirming";
+                state.step = "awaiting_confirmation";
 
                 bot.sendMessage(
                     chatId,
-                    `🧾 *Confirm your order:*\n\n🛠 Service: ${state.service.name}\n🔗 Link: ${state.link}\n📦 Quantity: ${state.quantity}`,
+                    `Confirm your order:\n\n🔗 Link: ${state.link}\n📦 Quantity: ${state.quantity}`,
                     {
-                        parse_mode: "Markdown",
                         reply_markup: {
                             inline_keyboard: [
                                 [{ text: "✅ Confirm", callback_data: "confirm_order" }],
@@ -239,16 +144,75 @@ export function setupTelegramBot(app) {
                 );
             }
         } catch (err) {
-            console.error("Message handling error:", err.message);
+            console.error("Telegram message error:", err.message);
+            bot.sendMessage(chatId, "⚠️ Something went wrong. Please try again.");
+        }
+    });
+
+    // =====================================================
+    // Handle inline button callbacks
+    // =====================================================
+    bot.on("callback_query", async (callbackQuery) => {
+        const chatId = callbackQuery.message.chat.id;
+        const data = callbackQuery.data;
+        const state = userStates[chatId];
+
+        if (!state) return bot.answerCallbackQuery(callbackQuery.id);
+
+        if (data === "cancel_order") {
+            delete userStates[chatId];
+            bot.sendMessage(chatId, "❌ Order cancelled.");
+            return bot.answerCallbackQuery(callbackQuery.id);
+        }
+
+        if (data === "confirm_order") {
+            if (!state.link || !state.quantity) {
+                bot.sendMessage(chatId, "⚠️ Missing order details. Please start again with /order.");
+                return bot.answerCallbackQuery(callbackQuery.id);
+            }
+
+            bot.sendMessage(chatId, "⏳ Placing your order, please wait...");
+
+            try {
+                // ✅ Use BOT_JWT for authorization
+                const response = await axios.post(
+                    `${url}/api/jap/order`,
+                    {
+                        serviceId: process.env.DEFAULT_SERVICE_ID || 1,
+                        link: state.link,
+                        quantity: state.quantity,
+                        chatId: chatId,
+                    },
+                    {
+                        headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${botJwt}`,
+                        },
+                    }
+                );
+
+                const { localOrder } = response.data;
+                bot.sendMessage(
+                    chatId,
+                    `✅ *Order Placed Successfully!*\n\n🆔 Order ID: ${localOrder.id}\n📦 Status: ${localOrder.status}`,
+                    { parse_mode: "Markdown" }
+                );
+            } catch (err) {
+                console.error("Order placement error:", err.response?.data || err.message);
+                bot.sendMessage(chatId, "❗ Failed to place the order. Please try again later.");
+            }
+
+            delete userStates[chatId];
+            bot.answerCallbackQuery(callbackQuery.id);
         }
     });
 }
 
 // =====================================================
-// 🟢 Exported helper for order status notifications
+// 🔔 Notify order status updates (from backend)
 // =====================================================
 export async function notifyOrderStatus(order) {
-    if (!order.chatId || !bot) return;
+    if (!bot || !order.chatId) return;
     const msg = `📢 *Order Update*\n\n🆔 Order #${order.id}\n📦 Status: *${order.status.toUpperCase()}*`;
     try {
         await bot.sendMessage(order.chatId, msg, { parse_mode: "Markdown" });
