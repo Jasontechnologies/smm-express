@@ -6,6 +6,9 @@ import { fetchServices } from "../japClient.js";
 
 dotenv.config();
 
+// Global bot instance (to use later in notifyOrderStatus)
+let bot;
+
 export function setupTelegramBot(app) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const url = process.env.HOST_URL;
@@ -16,22 +19,22 @@ export function setupTelegramBot(app) {
     }
 
     // ✅ Initialize Telegram bot (webhook mode)
-    const bot = new TelegramBot(token);
+    bot = new TelegramBot(token);
     bot.setWebHook(`${url}/bot${token}`);
     console.log(`🌐 Webhook set at ${url}/bot${token}`);
 
-    // ✅ Webhook route attached to main Express app
+    // ✅ Webhook route uses same Express app
     app.post(`/bot${token}`, (req, res) => {
         console.log("📩 Telegram update received");
         bot.processUpdate(req.body);
         res.sendStatus(200);
     });
 
-    // In-memory state per user session
+    // Store per-user states
     const userStates = {};
 
     // =====================================================
-    // 🟢 START COMMAND
+    // 🟢 /start
     // =====================================================
     bot.onText(/\/start/, (msg) => {
         const chatId = msg.chat.id;
@@ -46,7 +49,7 @@ export function setupTelegramBot(app) {
     });
 
     // =====================================================
-    // 🟢 SET JAP API KEY
+    // 🟢 /setkey
     // =====================================================
     bot.onText(/\/setkey (.+)/, async (msg, match) => {
         const chatId = msg.chat.id;
@@ -70,7 +73,7 @@ export function setupTelegramBot(app) {
     });
 
     // =====================================================
-    // 🟢 CHECK BALANCE
+    // 🟢 /balance
     // =====================================================
     bot.onText(/\/balance/, async (msg) => {
         const chatId = msg.chat.id;
@@ -93,12 +96,12 @@ export function setupTelegramBot(app) {
             });
         } catch (err) {
             console.error("Balance check error:", err.message);
-            bot.sendMessage(chatId, "❗ Failed to fetch JAP balance. Please check your JAP key.");
+            bot.sendMessage(chatId, "❗ Failed to fetch JAP balance.");
         }
     });
 
     // =====================================================
-    // 🟢 ORDER FLOW — Interactive Service Selection
+    // 🟢 /order
     // =====================================================
     bot.onText(/\/order/, async (msg) => {
         const chatId = msg.chat.id;
@@ -114,7 +117,6 @@ export function setupTelegramBot(app) {
                 return bot.sendMessage(chatId, "❗ No JAP services found. Please check your JAP key.");
             }
 
-            // Inline buttons for available services
             const inlineKeyboard = services.slice(0, 10).map((s) => [
                 { text: s.name.slice(0, 40), callback_data: `select_service_${s.service}` },
             ]);
@@ -131,7 +133,7 @@ export function setupTelegramBot(app) {
     });
 
     // =====================================================
-    // 🟢 CALLBACK HANDLERS (buttons)
+    // 🟢 CALLBACK HANDLER
     // =====================================================
     bot.on("callback_query", async (callbackQuery) => {
         const chatId = callbackQuery.message.chat.id;
@@ -155,13 +157,13 @@ export function setupTelegramBot(app) {
                 );
             }
 
-            // ❌ Cancel order
+            // ❌ Cancel
             if (data === "cancel_order") {
                 delete userStates[chatId];
                 bot.sendMessage(chatId, "❌ Order cancelled.");
             }
 
-            // ✅ Confirm order
+            // ✅ Confirm
             if (data === "confirm_order") {
                 if (!state.link || !state.quantity || !state.service) {
                     return bot.sendMessage(chatId, "⚠️ Missing details. Please restart with /order");
@@ -185,7 +187,7 @@ export function setupTelegramBot(app) {
                     );
                 } catch (err) {
                     console.error("Order placement error:", err.response?.data || err.message);
-                    bot.sendMessage(chatId, "❗ Failed to place order. Please try again later.");
+                    bot.sendMessage(chatId, "❗ Failed to place order.");
                 }
 
                 delete userStates[chatId];
@@ -199,12 +201,13 @@ export function setupTelegramBot(app) {
     });
 
     // =====================================================
-    // 🟢 MESSAGE HANDLER (link → quantity → confirm)
+    // 🟢 MESSAGE HANDLER
     // =====================================================
     bot.on("message", async (msg) => {
         const chatId = msg.chat.id;
         const text = msg.text;
         if (text.startsWith("/")) return;
+
         const state = userStates[chatId];
         if (!state) return;
 
@@ -239,17 +242,17 @@ export function setupTelegramBot(app) {
             console.error("Message handling error:", err.message);
         }
     });
+}
 
-    // =====================================================
-    // 🟢 Order status updates (called externally)
-    // =====================================================
-    export async function notifyOrderStatus(order) {
-        if (!order.chatId) return;
-        const msg = `📢 *Order Update*\n\n🆔 Order #${order.id}\n📦 Status: *${order.status.toUpperCase()}*`;
-        try {
-            await bot.sendMessage(order.chatId, msg, { parse_mode: "Markdown" });
-        } catch (err) {
-            console.error("Telegram notify error:", err.message);
-        }
+// =====================================================
+// 🟢 Exported helper for order status notifications
+// =====================================================
+export async function notifyOrderStatus(order) {
+    if (!order.chatId || !bot) return;
+    const msg = `📢 *Order Update*\n\n🆔 Order #${order.id}\n📦 Status: *${order.status.toUpperCase()}*`;
+    try {
+        await bot.sendMessage(order.chatId, msg, { parse_mode: "Markdown" });
+    } catch (err) {
+        console.error("Telegram notify error:", err.message);
     }
 }
