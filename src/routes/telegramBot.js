@@ -42,17 +42,17 @@ export function setupTelegramBot(app) {
         if (greetings.some((g) => text.includes(g))) {
             return bot.sendMessage(
                 msg.chat.id,
-                "👋 *Hey there!* Welcome to *Quantum JAP Bot* 🚀\n\n" +
+                "👋 *Hey there!* Welcome to *Quantum JAP Bot* \n\n" +
                 "I can help you place orders, check balances, or set your JAP API key.\n\n" +
                 "Choose one below 👇",
                 {
                     parse_mode: "Markdown",
                     reply_markup: {
                         inline_keyboard: [
-                            [{ text: "🛍️ Place Order", callback_data: "start_order" }],
-                            [{ text: "💰 Check Balance", callback_data: "check_balance" }],
-                            [{ text: "📜 View Order History", callback_data: "view_orders" }],
-                            [{ text: "⚙️ Set JAP Key", callback_data: "set_key_help" }],
+                            [{ text: " Place Order", callback_data: "start_order" }],
+                            [{ text: " Check Balance", callback_data: "check_balance" }],
+                            [{ text: " View Order History", callback_data: "view_orders" }],
+                            [{ text: " Set JAP Key", callback_data: "set_key_help" }],
                         ],
                     },
                 }
@@ -66,18 +66,18 @@ export function setupTelegramBot(app) {
     bot.onText(/\/start/, (msg) => {
         bot.sendMessage(
             msg.chat.id,
-            "✨ *Welcome to Quantum JAP Bot!* ✨\n\n" +
+            " *Welcome to Quantum JAP Bot!* \n\n" +
             "Here’s what I can do:\n\n" +
-            "🛍️ Place new JAP orders\n💰 Check your JAP balance\n📜 View order history\n⚙️ Save your JAP API key\n\n" +
+            " Place new JAP orders\n Check your JAP balance\n View order history\n Save your JAP API key\n\n" +
             "What would you like to do?",
             {
                 parse_mode: "Markdown",
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: "🛍️ Place Order", callback_data: "start_order" }],
-                        [{ text: "💰 Check Balance", callback_data: "check_balance" }],
-                        [{ text: "📜 View Order History", callback_data: "view_orders" }],
-                        [{ text: "⚙️ Set JAP Key", callback_data: "set_key_help" }],
+                        [{ text: " Place Order", callback_data: "start_order" }],
+                        [{ text: " Check Balance", callback_data: "check_balance" }],
+                        [{ text: " View Order History", callback_data: "view_orders" }],
+                        [{ text: " Set JAP Key", callback_data: "set_key_help" }],
                     ],
                 },
             }
@@ -125,7 +125,7 @@ export function setupTelegramBot(app) {
                 const balance = res.data.balance || "0.00";
                 const currency = res.data.currency || "USD";
 
-                bot.sendMessage(chatId, `💰 *Your JAP Balance:*\n${balance} ${currency}`, {
+                bot.sendMessage(chatId, ` *Your JAP Balance:*\n${balance} ${currency}`, {
                     parse_mode: "Markdown",
                 });
             }
@@ -136,7 +136,7 @@ export function setupTelegramBot(app) {
             if (data === "view_orders") {
                 bot.sendMessage(
                     chatId,
-                    "🌍 *View your full order history here:*\nhttps://smm-react-six.vercel.app/orders",
+                    " *View your full order history here:*\nhttps://smm-react-six.vercel.app/orders",
                     { parse_mode: "Markdown" }
                 );
             }
@@ -243,7 +243,7 @@ export function setupTelegramBot(app) {
         if (state.step === "awaiting_link") {
             state.link = text;
             state.step = "awaiting_quantity";
-            bot.sendMessage(chatId, "📦 Got it! Now enter the *quantity*:", { parse_mode: "Markdown" });
+            bot.sendMessage(chatId, " Got it! Now enter the *quantity*:", { parse_mode: "Markdown" });
         } else if (state.step === "awaiting_quantity") {
             const quantity = parseInt(text);
             if (isNaN(quantity) || quantity <= 0)
@@ -253,7 +253,7 @@ export function setupTelegramBot(app) {
 
             bot.sendMessage(
                 chatId,
-                `🧾 Confirm your order:\n\n🔹 Service ID: ${state.serviceId}\n🔗 Link: ${state.link}\n📦 Quantity: ${state.quantity}`,
+                ` Confirm your order:\n\n Service ID: ${state.serviceId}\n Link: ${state.link}\n Quantity: ${state.quantity}`,
                 {
                     reply_markup: {
                         inline_keyboard: [
@@ -286,7 +286,7 @@ export function setupTelegramBot(app) {
         if (start + pageSize < cache.services.length) nav.push({ text: "Next ▶️", callback_data: "page_next" });
         if (nav.length) buttons.push(nav);
 
-        bot.sendMessage(chatId, `📋 *Available Services* (Page ${page + 1})`, {
+        bot.sendMessage(chatId, ` *Available Services* (Page ${page + 1})`, {
             parse_mode: "Markdown",
             reply_markup: { inline_keyboard: buttons },
         });
@@ -298,7 +298,7 @@ export function setupTelegramBot(app) {
 // =====================================================
 export async function notifyOrderStatus(order) {
     if (!bot || !order.chatId) return;
-    const msg = `📢 *Order Update*\n\n🆔 Order #${order.id}\n📦 Status: *${order.status.toUpperCase()}*`;
+    const msg = ` *Order Update*\n\n Order #${order.id}\n Status: *${order.status.toUpperCase()}*`;
     try {
         await bot.sendMessage(order.chatId, msg, { parse_mode: "Markdown" });
     } catch (err) {
